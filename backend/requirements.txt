@@ -24,3 +24,18 @@ starlette==0.52.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.41.0
+
+# AI & MCP dependencies - using compatible versions
+openai==1.12.0
+numpy>=1.21.0  # Use compatible version instead of forcing 1.24.3
+pandas>=2.0.0
+scikit-learn>=1.2.0  
+pgvector==0.3.1
+python-multipart==0.0.6
+httpx==0.26.0
+# Temporarily comment out problematic dependencies
+# crewai==0.80.0
+# langchain==0.3.7
+# langchain-openai==0.2.8
+# langchain-community==0.3.7
+# mcp==1.0.0  # Install separately if needed

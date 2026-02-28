@@ -2,6 +2,7 @@ import uuid
 from sqlalchemy import Column, Text, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from app.db.base import Base
 
 class Ticket(Base):
@@ -18,3 +19,6 @@ class Ticket(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, onupdate=func.now())
+
+    # Relationships
+    resolutions = relationship("Resolution", back_populates="ticket")
