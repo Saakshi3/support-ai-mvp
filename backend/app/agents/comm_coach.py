@@ -34,6 +34,9 @@ class CommCoachAgent:
                 ticket.ticket_id, email_content, created_by_user_id, db
             )
             
+            # Add email_id to the draft response
+            email_content.email_id = email_record.email_id
+            
             # Create audit log (optional, don't fail if it doesn't work)
             try:
                 # Skip audit log for now - method signature needs fixing
@@ -59,6 +62,7 @@ class CommCoachAgent:
                 type="DRAFT",
                 subject=email_draft.subject,
                 body=email_draft.body,
+                is_approved=False,  # Drafts start as not approved
                 created_by=created_by_user_id
             )
             
@@ -85,6 +89,7 @@ class CommCoachAgent:
                 type="DRAFT",
                 subject=email_draft.subject,
                 body=email_draft.body,
+                is_approved=False,  # Drafts start as not approved
                 created_by=created_by_user_id
             )
             
@@ -319,20 +324,22 @@ Generate an appropriate email response."""
         """
         try:
             from sqlalchemy.orm import Session
-            from app.db.models.ticket import Email
+            from app.db.models.email import Email
+            from datetime import datetime
             
             email = db.query(Email).filter(Email.email_id == email_id).first()
             if not email:
                 return False
             
-            # Mark as approved
+            # Mark as approved and change type to SUPPORT_UPDATE
             email.is_approved = True
             email.approved_at = datetime.utcnow()
+            email.type = "SUPPORT_UPDATE"  # Change from DRAFT to SUPPORT_UPDATE
             
             db.commit()
             
             # In real implementation: send via email service
-            print(f"Email {email_id} marked as approved/sent")
+            print(f"Email {email_id} marked as approved/sent to customer")
             return True
             
         except Exception as e:

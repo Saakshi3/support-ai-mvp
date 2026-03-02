@@ -141,6 +141,7 @@ async def draft_email_response(
         raise HTTPException(status_code=404, detail="Ticket not found")
     
     try:
+        print(f"Drafting email for ticket {ticket_id} with payload: {payload}")
         email_draft = await tools.draft_email_response(
             db,
             ticket_id=ticket_id,
@@ -149,8 +150,12 @@ async def draft_email_response(
             recipient_context=payload.recipient_context,
             created_by_user_id=UUID(current["user_id"])
         )
+        print(f"Email draft created successfully: {email_draft}")
         return email_draft
     except Exception as e:
+        print(f"Email drafting error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Email drafting failed: {str(e)}")
 
 # EMAIL COMMUNICATION ENDPOINTS
@@ -200,8 +205,9 @@ async def get_ticket_emails(
                 "subject": email.subject,
                 "body": email.body,
                 "created_at": email.created_at,
-                "is_from_customer": email.type == "CUSTOMER_REPLY"
-            } for email in emails
+                "is_from_customer": email.type == "CUSTOMER_REPLY",
+                "is_approved": getattr(email, 'is_approved', True)
+            } for email in emails if email.type in ["CUSTOMER_REPLY", "SUPPORT_UPDATE"] or (email.type == "DRAFT" and getattr(email, 'is_approved', False))
         ]
     }
 

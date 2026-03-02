@@ -180,16 +180,12 @@ def create_customer_reply(
     try:
         # Create email object for customer reply
         customer_email = Email(
-            email_id=uuid.uuid4(),
             ticket_id=ticket_id,
             type="CUSTOMER_REPLY",
             subject=f"Re: Support Ticket #{str(ticket_id)[:8]}",
             body=reply_text,
-            tone="customer",
-            audience="support_team",
             is_approved=True,  # Customer replies are auto-approved
-            created_by=customer_user_id,
-            approved_by=None
+            created_by=customer_user_id
         )
         
         db.add(customer_email)

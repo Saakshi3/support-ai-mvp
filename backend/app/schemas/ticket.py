@@ -42,8 +42,12 @@ class ResolutionOption(BaseModel):
 
 class AnalysisResult(BaseModel):
     ticket_id: UUID
+    category: Optional[str] = "general_support"
+    reasoning: Optional[str] = "Analysis completed using pattern matching"
+    confidence_score: float = 0.8
     resolution_options: List[ResolutionOption]
     similar_incidents_count: int
+    escalation_recommended: bool = False
     analysis_timestamp: datetime
     audit_log_id: Optional[UUID] = None
 
@@ -53,6 +57,7 @@ class EmailDraftRequest(BaseModel):
     recipient_context: str = "customer"  # customer | internal | executive
     
 class EmailDraft(BaseModel):
+    email_id: Optional[UUID] = None
     subject: str
     body: str
     confidence_score: float

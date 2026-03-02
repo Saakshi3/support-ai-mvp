@@ -49,10 +49,30 @@ class InsightsBuddyAgent:
                 # Continue without audit log
                 audit_log = None
             
+            # Determine category based on ticket content
+            category = self._determine_category(ticket_request)
+            
+            # Calculate overall confidence from resolution options
+            avg_confidence = sum(opt.confidence_score for opt in resolution_options) / len(resolution_options) if resolution_options else 0.5
+            
+            # Determine if escalation is needed based on confidence and complexity
+            escalation_needed = (
+                avg_confidence < 0.6 or 
+                len(similar_resolutions) == 0 or
+                any("critical" in opt.title.lower() or "urgent" in opt.description.lower() for opt in resolution_options)
+            )
+            
+            # Generate reasoning
+            reasoning = f"Analyzed ticket using {'vector similarity' if similar_resolutions else 'pattern matching'}. Found {len(similar_resolutions)} similar cases."
+            
             return AnalysisResult(
                 ticket_id=ticket_request.ticket_id,
+                category=category,
+                reasoning=reasoning,
+                confidence_score=avg_confidence,
                 resolution_options=resolution_options,
                 similar_incidents_count=len(similar_resolutions),
+                escalation_recommended=escalation_needed,
                 analysis_timestamp=datetime.utcnow(),
                 audit_log_id=audit_log.ai_event_id if audit_log else None
             )
@@ -449,6 +469,22 @@ Base your suggestions on the historical resolutions and provide realistic confid
             except:
                 pass
             raise e
+    
+    def _determine_category(self, ticket_request: TicketAnalysisRequest) -> str:
+        """Determine ticket category based on content"""
+        title_lower = ticket_request.title.lower()
+        desc_lower = ticket_request.description.lower()
+        
+        if any(word in title_lower or word in desc_lower for word in ['outlook', 'email', 'sync', 'mailbox']):
+            return "email_support"
+        elif any(word in title_lower or word in desc_lower for word in ['access', 'permission', 'denied', 'login']):
+            return "access_management"
+        elif any(word in title_lower or word in desc_lower for word in ['server', 'down', 'timeout', 'connection']):
+            return "infrastructure"
+        elif any(word in title_lower or word in desc_lower for word in ['dashboard', 'blank', 'loading', 'ui']):
+            return "ui_issues"
+        else:
+            return "general_support"
 
 # Global instance
 insights_buddy = InsightsBuddyAgent()
