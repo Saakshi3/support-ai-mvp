@@ -153,6 +153,179 @@ async def draft_email_response(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Email drafting failed: {str(e)}")
 
+# EMAIL COMMUNICATION ENDPOINTS
+
+@router.post("/{ticket_id}/send-email/{email_id}")
+async def send_email(
+    ticket_id: UUID,
+    email_id: UUID, 
+    db: Session = Depends(get_db),
+    current=Depends(get_current_user)
+):
+    """Send/approve a drafted email to customer"""
+    if current["role"] != "SUPPORT":
+        raise HTTPException(status_code=403, detail="Only SUPPORT can send emails")
+    
+    try:
+        success = await tools.approve_and_send_email(db, email_id=email_id)
+        if success:
+            return {"status": "Email sent successfully", "email_id": email_id}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to send email")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Send email failed: {str(e)}")
+
+@router.get("/{ticket_id}/emails")
+async def get_ticket_emails(
+    ticket_id: UUID,
+    db: Session = Depends(get_db), 
+    current=Depends(get_current_user)
+):
+    """Get all emails/communications for a ticket"""
+    ticket = tools.get_ticket(db, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    # Check permissions - REQUESTER can only see their own tickets
+    if current["role"] == "REQUESTER" and ticket.created_by != UUID(current["user_id"]):
+        raise HTTPException(status_code=403, detail="Not allowed to view this ticket")
+    
+    emails = tools.get_ticket_emails(db, ticket_id=ticket_id)
+    return {
+        "ticket_id": ticket_id,
+        "emails": [
+            {
+                "email_id": email.email_id,
+                "type": email.type,
+                "subject": email.subject,
+                "body": email.body,
+                "created_at": email.created_at,
+                "is_from_customer": email.type == "CUSTOMER_REPLY"
+            } for email in emails
+        ]
+    }
+
+@router.post("/{ticket_id}/customer-reply")
+async def customer_reply(
+    ticket_id: UUID,
+    payload: dict,  # {"reply_text": "Thank you, but I still have issues..."}
+    db: Session = Depends(get_db),
+    current=Depends(get_current_user)
+):
+    """Customer replies to support communications"""
+    if current["role"] != "REQUESTER":
+        raise HTTPException(status_code=403, detail="Only REQUESTER can reply as customer")
+    
+    ticket = tools.get_ticket(db, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+        
+    # Can only reply to own tickets
+    if ticket.created_by != UUID(current["user_id"]):
+        raise HTTPException(status_code=403, detail="Can only reply to your own tickets")
+    
+    try:
+        reply_email = tools.create_customer_reply(
+            db,
+            ticket_id=ticket_id,
+            reply_text=payload["reply_text"],
+            customer_user_id=UUID(current["user_id"])
+        )
+        
+        # Also reopen ticket if it was resolved
+        if ticket.status == "RESOLVED":
+            tools.set_ticket_status(db, ticket_id=ticket_id, status="ASSIGNED")
+        
+        return {
+            "email_id": reply_email.email_id,
+            "message": "Reply added successfully",
+            "ticket_reopened": ticket.status == "RESOLVED"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reply failed: {str(e)}")
+
+@router.post("/{ticket_id}/customer-approve-resolution")
+async def customer_approve_resolution(
+    ticket_id: UUID,
+    payload: dict,  # {"approved": true, "feedback": "Works perfectly now!"}
+    db: Session = Depends(get_db),
+    current=Depends(get_current_user)
+):
+    """Customer approves resolution and closes ticket"""
+    if current["role"] != "REQUESTER":
+        raise HTTPException(status_code=403, detail="Only REQUESTER can approve resolution")
+    
+    ticket = tools.get_ticket(db, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+        
+    # Can only approve own tickets
+    if ticket.created_by != UUID(current["user_id"]):
+        raise HTTPException(status_code=403, detail="Can only approve your own tickets")
+    
+    try:
+        if payload.get("approved", False):
+            # Create customer approval email
+            approval_email = tools.create_customer_reply(
+                db,
+                ticket_id=ticket_id,
+                reply_text=f"✅ Resolution Approved: {payload.get('feedback', 'Thank you for resolving this issue!')}",
+                customer_user_id=UUID(current["user_id"])
+            )
+            
+            # Mark ticket as resolved
+            tools.set_ticket_status(db, ticket_id=ticket_id, status="RESOLVED")
+            
+            return {
+                "status": "Resolution approved", 
+                "ticket_status": "RESOLVED",
+                "feedback_email_id": approval_email.email_id
+            }
+        else:
+            # Customer rejected resolution
+            rejection_email = tools.create_customer_reply(
+                db,
+                ticket_id=ticket_id,
+                reply_text=f"❌ Resolution Rejected: {payload.get('feedback', 'The issue is not fully resolved yet.')}",
+                customer_user_id=UUID(current["user_id"])
+            )
+            
+            # Reopen ticket
+            tools.set_ticket_status(db, ticket_id=ticket_id, status="ASSIGNED")
+            
+            return {
+                "status": "Resolution rejected",
+                "ticket_status": "ASSIGNED", 
+                "feedback_email_id": rejection_email.email_id
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Approval failed: {str(e)}")
+
+@router.get("/{ticket_id}/ai-audit-log")
+async def get_ai_audit_log(
+    ticket_id: UUID,
+    db: Session = Depends(get_db),
+    current=Depends(get_current_user)
+):
+    """Get AI audit logs for a ticket"""
+    if current["role"] != "SUPPORT":
+        raise HTTPException(status_code=403, detail="Only SUPPORT can view audit logs")
+    
+    logs = tools.get_ai_audit_logs(db, ticket_id=ticket_id)
+    return {
+        "ticket_id": ticket_id,
+        "audit_logs": [
+            {
+                "ai_event_id": log.ai_event_id,
+                "agent_name": log.agent_name,
+                "model_name": log.model_name,
+                "confidence_json": log.confidence_json,
+                "was_used": log.was_used,
+                "created_at": log.created_at
+            } for log in logs
+        ]
+    }
+
 @router.get("/{ticket_id}/emails")
 async def get_ticket_emails(
     ticket_id: UUID,

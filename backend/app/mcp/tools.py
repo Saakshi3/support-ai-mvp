@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import uuid
+from datetime import datetime
 from app.db.models.user import User
 from app.db.models.ticket import Ticket
 from app.db.models.historical_incident import HistoricalIncident
@@ -165,6 +166,59 @@ def get_ticket_emails(db: Session, *, ticket_id: uuid.UUID) -> List[Email]:
     except Exception as e:
         print(f"Error in get_ticket_emails: {str(e)}")
         return []
+
+def create_customer_reply(
+    db: Session, 
+    *, 
+    ticket_id: uuid.UUID, 
+    reply_text: str, 
+    customer_user_id: uuid.UUID
+) -> Email:
+    """
+    MCP Tool: Create customer reply email
+    """
+    try:
+        # Create email object for customer reply
+        customer_email = Email(
+            email_id=uuid.uuid4(),
+            ticket_id=ticket_id,
+            type="CUSTOMER_REPLY",
+            subject=f"Re: Support Ticket #{str(ticket_id)[:8]}",
+            body=reply_text,
+            tone="customer",
+            audience="support_team",
+            is_approved=True,  # Customer replies are auto-approved
+            created_by=customer_user_id,
+            approved_by=None
+        )
+        
+        db.add(customer_email)
+        db.commit()
+        db.refresh(customer_email)
+        
+        return customer_email
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Error in create_customer_reply: {str(e)}")
+        raise e
+
+def set_ticket_status(db: Session, *, ticket_id: uuid.UUID, status: str) -> bool:
+    """
+    MCP Tool: Update ticket status
+    """
+    try:
+        ticket = db.query(Ticket).filter(Ticket.ticket_id == ticket_id).first()
+        if ticket:
+            ticket.status = status
+            ticket.updated_at = datetime.utcnow()
+            db.commit()
+            return True
+        return False
+    except Exception as e:
+        db.rollback()
+        print(f"Error in set_ticket_status: {str(e)}")
+        return False
 
 def get_ai_audit_logs(db: Session, *, 
                      ticket_id: Optional[uuid.UUID] = None,

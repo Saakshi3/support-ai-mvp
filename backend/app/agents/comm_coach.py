@@ -1,6 +1,7 @@
 import json
 import uuid
 from typing import Dict, Any
+from uuid import UUID
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -298,6 +299,46 @@ If you have any additional information that might be helpful, please feel free t
     
     def _create_email_prompt(self, ticket: Ticket, draft_request: EmailDraftRequest) -> str:
         """Create the email generation prompt"""
+        return f"""Generate a professional support email based on the following details:
+
+Ticket ID: {ticket.ticket_id}
+Issue: {ticket.description}
+Category: {ticket.category}
+Priority: {ticket.priority}
+
+Email Type: {draft_request.email_type}
+Recipient Context: {draft_request.recipient_context}
+Tone: {draft_request.tone}
+
+Generate an appropriate email response."""
+
+    async def approve_and_send_email(self, email_id: UUID, db) -> bool:
+        """
+        Approve and send email - marks email as approved and ready for sending
+        In real implementation, this would integrate with email service (SendGrid, etc.)
+        """
+        try:
+            from sqlalchemy.orm import Session
+            from app.db.models.ticket import Email
+            
+            email = db.query(Email).filter(Email.email_id == email_id).first()
+            if not email:
+                return False
+            
+            # Mark as approved
+            email.is_approved = True
+            email.approved_at = datetime.utcnow()
+            
+            db.commit()
+            
+            # In real implementation: send via email service
+            print(f"Email {email_id} marked as approved/sent")
+            return True
+            
+        except Exception as e:
+            db.rollback()
+            print(f"Error approving email {email_id}: {str(e)}")
+            return False
         resolution = draft_request.resolution_option
         
         return f"""
