@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from typing import List, Optional
 import uuid
 from datetime import datetime
@@ -56,10 +57,29 @@ def assign_ticket(db: Session, *, ticket_id, assigned_to_user_id):
     t = get_ticket(db, ticket_id)
     if not t:
         return None
+    
+    # Get assignee info for the notification
+    assignee = db.query(User).filter(User.user_id == assigned_to_user_id).first()
+    
     t.assigned_to = assigned_to_user_id
     t.status = "ASSIGNED"
     db.commit()
     db.refresh(t)
+    
+    # Create system notification email for assignment
+    if assignee:
+        system_email = Email(
+            ticket_id=ticket_id,
+            type="DRAFT",
+            subject=f"Ticket #{str(ticket_id)[:8]} - Assigned to Support Agent",
+            body=f"Your ticket has been assigned to our support team.\n\nAssigned Agent: {assignee.display_name}\nStatus: ASSIGNED\n\nWe will begin working on your issue and provide updates as we progress.",
+            is_approved=True,
+            approved_at=datetime.utcnow(),
+            created_by=assigned_to_user_id
+        )
+        db.add(system_email)
+        db.commit()
+    
     return t
 
 def set_ticket_status(db: Session, *, ticket_id, status: str):
@@ -162,9 +182,14 @@ def get_ticket_emails(db: Session, *, ticket_id: uuid.UUID) -> List[Email]:
     Returns both draft and approved emails
     """
     try:
-        return db.query(Email).filter(Email.ticket_id == ticket_id).order_by(Email.created_at.desc()).all()
+        print(f"[DEBUG] get_ticket_emails called for ticket_id: {ticket_id}")
+        emails = db.query(Email).filter(Email.ticket_id == ticket_id).order_by(Email.created_at.desc()).all()
+        print(f"[DEBUG] Found {len(emails)} emails for ticket {ticket_id}")
+        for email in emails:
+            print(f"[DEBUG] Email {email.email_id}: type={email.type}, approved={getattr(email, 'is_approved', None)}, subject='{email.subject[:50]}...'")
+        return emails
     except Exception as e:
-        print(f"Error in get_ticket_emails: {str(e)}")
+        print(f"[ERROR] Error in get_ticket_emails: {str(e)}")
         return []
 
 def create_customer_reply(
@@ -185,6 +210,7 @@ def create_customer_reply(
             subject=f"Re: Support Ticket #{str(ticket_id)[:8]}",
             body=reply_text,
             is_approved=True,  # Customer replies are auto-approved
+            approved_at=datetime.utcnow(),  # Set approval timestamp
             created_by=customer_user_id
         )
         

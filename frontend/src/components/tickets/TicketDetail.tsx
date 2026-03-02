@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
@@ -16,7 +16,7 @@ import {
 import { api } from '@/lib/api';
 import { Ticket, AnalysisResult, EmailDraft, Email } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { formatDateTime, getStatusColor, getPriorityColor, formatTimeAgo } from '@/lib/utils';
+import { formatDateTime, getStatusColor, formatTimeAgo } from '@/lib/utils';
 import toast from 'react-hot-toast';
 
 export default function TicketDetail() {
@@ -39,14 +39,17 @@ export default function TicketDetail() {
     enabled: !!ticketId,
   });
 
-  // Fetch ticket emails/communications
-  const { data: emails, isLoading: emailsLoading } = useQuery({
+  // Fetch ticket emails/communications  
+  const { data: emails, isLoading: emailsLoading, refetch: refetchEmails } = useQuery({
     queryKey: ['ticket-emails', ticketId],
     queryFn: async () => {
+      console.log('[DEBUG] Fetching emails for ticket:', ticketId);
       const response = await api.get<{emails: Email[]}>(`/tickets/${ticketId}/emails`);
+      console.log('[DEBUG] Fetched emails:', response.data.emails);
       return response.data.emails;
     },
     enabled: !!ticketId,
+    refetchInterval: 5000, // Auto-refresh every 5 seconds to catch new messages
   });
 
   // AI Analysis mutation
@@ -86,19 +89,52 @@ export default function TicketDetail() {
   // Send Email mutation
   const sendEmailMutation = useMutation({
     mutationFn: async (emailId: string) => {
+      console.log('[DEBUG] Sending email with ID:', emailId);
       if (!emailId) {
         throw new Error('Email ID is required');
       }
       const response = await api.post(`/tickets/${ticketId}/send-email/${emailId}`);
+      console.log('[DEBUG] Send email response:', response.data);
+      return response.data;
+    },
+    onSuccess: (data) => {
+      console.log('[SUCCESS] Email sent successfully:', data);
+      
+      // Wait a bit before refetching to ensure backend changes are committed
+      setTimeout(() => {
+        console.log('[DEBUG] Invalidating queries and refetching...');
+        // Refresh both ticket and emails to show updated conversation
+        queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+        queryClient.invalidateQueries({ queryKey: ['ticket-emails', ticketId] });
+        // Force immediate refetch
+        refetchEmails();
+      }, 500);
+      
+      toast.success('Email sent successfully!');
+      setShowEmailDraft(false); // Close email draft panel
+    },
+    onError: (error: any) => {
+      console.error('[ERROR] Send email error:', error);
+      const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to send email';
+      toast.error(errorMessage);
+    },
+  });
+
+  // Ticket Assignment mutation
+  const assignmentMutation = useMutation({
+    mutationFn: async (assigneeEmail: string) => {
+      const response = await api.post(`/tickets/${ticketId}/assign`, {
+        assigned_to_email: assigneeEmail
+      });
       return response.data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ticket-emails', ticketId] });
-      toast.success('Email sent successfully!');
+      queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+      queryClient.invalidateQueries({ queryKey: ['tickets'] }); // Refresh dashboard
+      toast.success('Ticket assigned successfully!');
     },
     onError: (error: any) => {
-      console.error('Send email error:', error);
-      const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to send email';
+      const errorMessage = error?.response?.data?.detail || 'Failed to assign ticket';
       toast.error(errorMessage);
     },
   });
@@ -153,10 +189,13 @@ export default function TicketDetail() {
   };
 
   const handleSendEmail = (emailId: string | undefined) => {
+    console.log('[DEBUG] handleSendEmail called with emailId:', emailId);
     if (!emailId) {
+      console.log('[ERROR] No email ID provided');
       toast.error('Email ID not available. Please draft an email first.');
       return;
     }
+    console.log('[DEBUG] Calling sendEmailMutation with:', emailId);
     sendEmailMutation.mutate(emailId);
   };
 
@@ -283,6 +322,16 @@ export default function TicketDetail() {
           
           {user?.role === 'SUPPORT' && (
             <div className="flex gap-2">
+              {ticket.status === 'NEW' && (
+                <button
+                  onClick={() => assignmentMutation.mutate(user.email)}
+                  disabled={assignmentMutation.isPending}
+                  className="btn-secondary"
+                >
+                  <UserIcon className="h-4 w-4 mr-2" />
+                  {assignmentMutation.isPending ? 'Assigning...' : 'Assign to Me'}
+                </button>
+              )}
               <button
                 onClick={handleAnalyze}
                 disabled={analysisMutation.isPending}
@@ -318,9 +367,15 @@ export default function TicketDetail() {
             </div>
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
-            <div className="text-sm font-medium text-gray-500">Created</div>
+            <div className="text-sm font-medium text-gray-500">
+              {ticket.assigned_to ? 'Assigned Agent' : 'Status'} 
+            </div>
             <div className="text-lg font-semibold text-gray-900 mt-1">
-              {formatDateTime(ticket.created_at)}
+              {ticket.assigned_to ? (
+                <span className="text-green-600">Agent Assigned</span> 
+              ) : (
+                <span className="text-yellow-600">Awaiting Assignment</span>
+              )}
             </div>
           </div>
           <div className="text-center p-3 bg-gray-50 rounded-lg">
@@ -389,7 +444,7 @@ export default function TicketDetail() {
                     </div>
                     <div className="bg-white rounded-md p-3 border border-gray-100">
                       <p className="text-gray-700 leading-relaxed">
-                        {option.description || option.resolution_text || 'Resolution suggestion unavailable'}
+                        {option.resolution_text || 'Resolution suggestion unavailable'}
                       </p>
                     </div>
                     <div className="mt-2 text-xs text-gray-600 bg-gray-100 rounded p-2">
@@ -470,14 +525,24 @@ export default function TicketDetail() {
 
       {/* Communications Timeline */}
       <div className="card p-6">
-        <div className="flex items-center mb-6">
-          <div className="p-2 bg-purple-100 rounded-lg mr-3">
-            <ChatBubbleLeftRightIcon className="h-5 w-5 text-purple-600" />
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center">
+            <div className="p-2 bg-purple-100 rounded-lg mr-3">
+              <ChatBubbleLeftRightIcon className="h-5 w-5 text-purple-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-medium text-gray-900">Communication Timeline</h2>
+              <p className="text-sm text-gray-500">All messages and updates for this ticket</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-medium text-gray-900">Communication Timeline</h2>
-            <p className="text-sm text-gray-500">All messages and updates for this ticket</p>
-          </div>
+          <button
+            onClick={() => refetchEmails()}
+            disabled={emailsLoading}
+            className="text-xs text-gray-500 hover:text-gray-700 flex items-center px-2 py-1 rounded"
+          >
+            <ArrowPathIcon className={`h-4 w-4 mr-1 ${emailsLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
         
         {emailsLoading ? (
@@ -487,20 +552,38 @@ export default function TicketDetail() {
           </div>
         ) : emails && emails.length > 0 ? (
           <div className="space-y-6">
-            {emails.map((email, index) => (
-              <div key={email.email_id} className="relative">
-                {/* Timeline connector */}
-                {index !== emails.length - 1 && (
-                  <div className="absolute left-6 top-12 w-0.5 h-12 bg-gray-200"></div>
-                )}
+            {(() => {
+              console.log('[DEBUG] Rendering emails:', emails);
+              return emails.map((email, index) => {
+                console.log(`[DEBUG] Rendering email ${index}:`, email);
+                return (
+                  <div key={email.email_id} className="relative">
+                    {/* Timeline connector */}
+                    {index !== emails.length - 1 && (
+                      <div className="absolute left-6 top-12 w-0.5 h-12 bg-gray-200"></div>
+                    )}
                 
                 <div className="flex items-start">
                   <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center ${
-                    email.is_from_customer ? 'bg-blue-100' : 'bg-green-100'
+                    email.type === 'DRAFT' && email.is_approved && email.subject.includes('Assigned') 
+                      ? 'bg-yellow-100' 
+                      : email.type === 'CUSTOMER_REPLY' || email.is_from_customer
+                      ? 'bg-blue-100' 
+                      : email.type === 'SUPPORT_RESPONSE' || email.type === 'APPROVED'
+                      ? 'bg-green-100'
+                      : email.type === 'DRAFT' && !email.is_approved
+                      ? 'bg-gray-100'
+                      : 'bg-green-100'
                   }`}>
-                    <UserIcon className={`h-6 w-6 ${
-                      email.is_from_customer ? 'text-blue-600' : 'text-green-600'
-                    }`} />
+                    {email.type === 'DRAFT' && email.is_approved && email.subject.includes('Assigned') ? (
+                      <UserIcon className="h-6 w-6 text-yellow-600" />
+                    ) : email.type === 'CUSTOMER_REPLY' || email.is_from_customer ? (
+                      <UserIcon className="h-6 w-6 text-blue-600" />
+                    ) : (
+                      <UserIcon className={`h-6 w-6 ${
+                        email.type === 'SUPPORT_RESPONSE' || email.type === 'APPROVED' ? 'text-green-600' : 'text-gray-600'
+                      }`} />
+                    )}
                   </div>
                   
                   <div className="ml-4 flex-1">
@@ -509,12 +592,38 @@ export default function TicketDetail() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center">
                             <span className="text-sm font-medium text-gray-900">
-                              {email.is_from_customer ? 'You' : 'Support Team'}
+                              {email.type === 'DRAFT' && email.is_approved && email.subject.includes('Assigned') 
+                                ? 'System Update' 
+                                : email.type === 'CUSTOMER_REPLY' || email.is_from_customer
+                                ? 'You' 
+                                : email.type === 'SUPPORT_RESPONSE' || email.type === 'APPROVED'
+                                ? 'Support Team'
+                                : email.type === 'DRAFT' && !email.is_approved
+                                ? 'Draft Message'
+                                : 'Support Team'}
                             </span>
-                            {email.is_approved && (
+                            {(email.type === 'SUPPORT_RESPONSE' || email.type === 'APPROVED') && (
                               <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
                                 <CheckCircleIcon className="h-3 w-3 mr-1" />
-                                Sent
+                                Sent to Customer
+                              </span>
+                            )}
+                            {email.type === 'DRAFT' && email.is_approved && (
+                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                                <CheckCircleIcon className="h-3 w-3 mr-1" />
+                                {email.subject.includes('Assigned') ? 'Auto-sent' : 'Sent'}
+                              </span>
+                            )}
+                            {email.type === 'DRAFT' && !email.is_approved && (
+                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                                <ClockIcon className="h-3 w-3 mr-1" />
+                                Draft
+                              </span>
+                            )}
+                            {email.type === 'CUSTOMER_REPLY' && (
+                              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                <ChatBubbleLeftRightIcon className="h-3 w-3 mr-1" />
+                                Customer Reply
                               </span>
                             )}
                           </div>
@@ -533,7 +642,9 @@ export default function TicketDetail() {
                   </div>
                 </div>
               </div>
-            ))}
+                );
+              });
+            })()} 
           </div>
         ) : (
           <div className="text-center py-8 bg-gray-50 rounded-lg">

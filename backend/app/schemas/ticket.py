@@ -33,12 +33,10 @@ class TicketAnalysisRequest(BaseModel):
     description: str
 
 class ResolutionOption(BaseModel):
-    title: str
-    description: str
+    resolution_text: str
     confidence_score: float
     reasoning: str
-    estimated_time: str
-    risk_level: str  # low|medium|high
+    supporting_incident_ids: Optional[List[str]] = []
 
 class AnalysisResult(BaseModel):
     ticket_id: UUID

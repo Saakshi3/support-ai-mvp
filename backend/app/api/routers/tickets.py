@@ -168,16 +168,25 @@ async def send_email(
     current=Depends(get_current_user)
 ):
     """Send/approve a drafted email to customer"""
+    print(f"[DEBUG] send_email API called: ticket_id={ticket_id}, email_id={email_id}, user_role={current['role']}")
+    
     if current["role"] != "SUPPORT":
         raise HTTPException(status_code=403, detail="Only SUPPORT can send emails")
     
     try:
         success = await tools.approve_and_send_email(db, email_id=email_id)
+        print(f"[DEBUG] approve_and_send_email result: {success}")
+        
         if success:
+            print(f"[DEBUG] Email {email_id} sent successfully")
             return {"status": "Email sent successfully", "email_id": email_id}
         else:
+            print(f"[ERROR] Failed to send email {email_id}")
             raise HTTPException(status_code=400, detail="Failed to send email")
     except Exception as e:
+        print(f"[ERROR] Send email exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Send email failed: {str(e)}")
 
 @router.get("/{ticket_id}/emails")
@@ -196,19 +205,46 @@ async def get_ticket_emails(
         raise HTTPException(status_code=403, detail="Not allowed to view this ticket")
     
     emails = tools.get_ticket_emails(db, ticket_id=ticket_id)
+    print(f"[DEBUG] get_ticket_emails API: Found {len(emails)} total emails for ticket {ticket_id}")
+    
+    # Log all emails before filtering
+    for i, email in enumerate(emails):
+        print(f"[DEBUG] Email {i}: id={email.email_id}, type={email.type}, approved={getattr(email, 'is_approved', None)}, subject='{email.subject[:50]}...'")
+    
+    filtered_emails = []
+    for email in emails:
+        # Include all emails except unapproved drafts
+        # APPROVED type should be included regardless of is_approved flag
+        include_email = (
+            email.type == "CUSTOMER_REPLY" or 
+            email.type == "SUPPORT_RESPONSE" or
+            email.type == "APPROVED" or  # Include APPROVED type emails
+            (email.type == "DRAFT" and getattr(email, 'is_approved', False))
+        )
+        print(f"[DEBUG] Email {email.email_id}: type={email.type}, approved={getattr(email, 'is_approved', None)}, include={include_email}")
+        if include_email:
+            filtered_emails.append(email)
+    
+    print(f"[DEBUG] Returning {len(filtered_emails)} filtered emails")
+    
+    # Create response with detailed logging
+    response_emails = []
+    for email in filtered_emails:
+        email_data = {
+            "email_id": email.email_id,
+            "type": email.type,
+            "subject": email.subject,
+            "body": email.body,
+            "created_at": email.created_at,
+            "is_from_customer": email.type == "CUSTOMER_REPLY",
+            "is_approved": getattr(email, 'is_approved', True)
+        }
+        response_emails.append(email_data)
+        print(f"[DEBUG] Adding to response: {email_data['email_id']} - {email_data['type']}")
+    
     return {
         "ticket_id": ticket_id,
-        "emails": [
-            {
-                "email_id": email.email_id,
-                "type": email.type,
-                "subject": email.subject,
-                "body": email.body,
-                "created_at": email.created_at,
-                "is_from_customer": email.type == "CUSTOMER_REPLY",
-                "is_approved": getattr(email, 'is_approved', True)
-            } for email in emails if email.type in ["CUSTOMER_REPLY", "SUPPORT_UPDATE"] or (email.type == "DRAFT" and getattr(email, 'is_approved', False))
-        ]
+        "emails": response_emails
     }
 
 @router.post("/{ticket_id}/customer-reply")

@@ -319,7 +319,7 @@ Generate an appropriate email response."""
 
     async def approve_and_send_email(self, email_id: UUID, db) -> bool:
         """
-        Approve and send email - marks email as approved and ready for sending
+        Approve and send email - changes type to APPROVED and marks as approved
         In real implementation, this would integrate with email service (SendGrid, etc.)
         """
         try:
@@ -327,26 +327,48 @@ Generate an appropriate email response."""
             from app.db.models.email import Email
             from datetime import datetime
             
+            print(f"[DEBUG] approve_and_send_email called for email_id: {email_id}")
+            
+            # First, let's find the email
             email = db.query(Email).filter(Email.email_id == email_id).first()
             if not email:
+                print(f"[ERROR] Email not found: {email_id}")
                 return False
             
-            # Mark as approved and change type to SUPPORT_UPDATE
+            print(f"[DEBUG] Found email: {email.email_id}, current type: {email.type}, approved: {getattr(email, 'is_approved', None)}")
+            
+            # Update the email with new values - use APPROVED type to match existing pattern
+            email.type = "APPROVED"
             email.is_approved = True
             email.approved_at = datetime.utcnow()
-            email.type = "SUPPORT_UPDATE"  # Change from DRAFT to SUPPORT_UPDATE
             
+            # Force a flush to ensure changes are written to DB
+            db.flush()
+            
+            # Verify the update worked
+            db.refresh(email)
+            print(f"[DEBUG] After update: type={email.type}, approved={email.is_approved}, approved_at={email.approved_at}")
+            
+            # Commit the transaction
             db.commit()
             
-            # In real implementation: send via email service
-            print(f"Email {email_id} marked as approved/sent to customer")
+            # Double-check by querying again
+            verification_email = db.query(Email).filter(Email.email_id == email_id).first()
+            if verification_email:
+                print(f"[DEBUG] Verification query - type={verification_email.type}, approved={verification_email.is_approved}")
+            
+            print(f"[SUCCESS] Email {email_id} successfully updated to APPROVED and marked as approved=True")
             return True
             
         except Exception as e:
-            db.rollback()
-            print(f"Error approving email {email_id}: {str(e)}")
+            print(f"[ERROR] Error approving email {email_id}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            try:
+                db.rollback()
+            except:
+                pass
             return False
-        resolution = draft_request.resolution_option
         
         return f"""
 Draft a professional customer support email response based on the following information:

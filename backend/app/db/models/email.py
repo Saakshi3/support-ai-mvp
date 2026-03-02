@@ -9,7 +9,7 @@ class Email(Base):
 
     email_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.ticket_id", ondelete="CASCADE"), nullable=False)
-    type = Column(Text, nullable=False)  # DRAFT | CUSTOMER_REPLY | SUPPORT_UPDATE
+    type = Column(Text, nullable=False)  # DRAFT | CUSTOMER_REPLY
     subject = Column(Text, nullable=False)
     body = Column(Text, nullable=False)
     is_approved = Column(Boolean, default=False, nullable=False)
